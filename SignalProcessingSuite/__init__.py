@@ -27,7 +27,7 @@ try:
     from .time_features import TimeFeatureBlock
     from .diffusion import diffusion_denoise
 except ImportError:
-    from fft_tools import (
+    from .fft_tools import (
         apply_window,
         dominant_frequency,
         fft,
@@ -37,7 +37,7 @@ except ImportError:
         short_time_fft,
         spectral_centroid,
     )
-    from filters import (
+    from .filters import (
         apply_fir,
         apply_iir,
         design_butterworth,
