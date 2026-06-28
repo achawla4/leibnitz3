@@ -46,12 +46,12 @@ except ImportError:
         filter_signal,
         moving_average,
     )
-    from realtime_processing import RingBuffer, chunk_stream, realtime_fft_processor, sliding_windows, stream_process
-    from utils import add_noise, generate_multitone, generate_sine, normalize, resample_signal, time_vector
-    from wavelet import compress, cwt, denoise, dwt, haar_dwt, haar_idwt, idwt
-    from blocks import BLOCK_REGISTRY, ProcessingBlock, get_block, list_blocks, timed_run
-    from time_features import TimeFeatureBlock
-    from diffusion import diffusion_denoise	
+    from .realtime_processing import RingBuffer, chunk_stream, realtime_fft_processor, sliding_windows, stream_process
+    from .utils import add_noise, generate_multitone, generate_sine, normalize, resample_signal, time_vector
+    from .wavelet import compress, cwt, denoise, dwt, haar_dwt, haar_idwt, idwt
+    from .blocks import BLOCK_REGISTRY, ProcessingBlock, get_block, list_blocks, timed_run
+    from .time_features import TimeFeatureBlock
+    from .diffusion import diffusion_denoise	
 
 __all__ = [
     "BLOCK_REGISTRY",
