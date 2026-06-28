@@ -25,7 +25,10 @@ try:
     from .wavelet import compress, cwt, denoise, dwt, haar_dwt, haar_idwt, idwt
     from .blocks import BLOCK_REGISTRY, ProcessingBlock, get_block, list_blocks, timed_run
     from .time_features import TimeFeatureBlock
-    from .diffusion import diffusion_denoise
+    try:
+        from .diffusion import diffusion_denoise
+    except ImportError:
+        diffusion_denoise = None
 except ImportError:
     from .fft_tools import (
         apply_window,
