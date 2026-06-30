@@ -712,6 +712,17 @@ def generate_suite_plot(original_filename, operation, original_signal, result_da
             return plot_filename
         return None
 
+    if operation == 'timefeaturetron':
+        canvas = result_data.get('canvas')
+        if canvas:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            plot_filename = f"{operation}_{timestamp}_{uuid.uuid4().hex[:8]}.png"
+            plot_path = os.path.join(app.config['PROCESSED_FOLDER'], plot_filename)
+            canvas.save(plot_path)
+            return plot_filename
+        return None
+
+
     from SignalProcessingSuite.visualization import plot_time, plot_frequency, plot_ifft, plot_wavelet_coefficients
     
     plt.style.use('dark_background')

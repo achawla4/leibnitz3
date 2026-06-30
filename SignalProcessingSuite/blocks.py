@@ -14,11 +14,13 @@ try:
     from .filters import filter_signal
     from .wavelet import dwt
     from .davincitron import MasterDesigner
+    from .time_features import MasterAnalyzer	
 except ImportError:
     from fft_tools import magnitude_spectrum
     from filters import filter_signal
     from wavelet import dwt
     from davincitron import MasterDesigner
+    from time_features import MasterAnalyzer	
 
 
 
@@ -277,6 +279,293 @@ class DavinciTronBlock(ProcessingBlock):
             metadata={"seed": seed, "score": score, "placed": placed},
         )
 
+"""TimeFeatureBlock — ProcessingBlock for time-domain feature extraction."""
+
+
+from typing import Any, Iterable
+import hashlib
+import io
+
+from scipy import stats
+from PIL import Image
+import matplotlib.pyplot as plt
+import matplotlib
+matplotlib.use('Agg')
+
+try:
+    from .utils import validate_1d_signal
+except ImportError:
+    from utils import validate_1d_signal
+
+
+class TimeFeatureBlock(ProcessingBlock):
+    """Extract time-domain features from signals and generate visualization."""
+
+    id = "time_features"
+    name = "Time-Domain Features"
+    category = "feature-extraction"
+    input_schema = {"signal": "1d-array", "sample_rate": "positive-float"}
+    output_schema = {
+        "mean": "float",
+        "median": "float",
+        "std": "float",
+        "variance": "float",
+        "rms": "float",
+        "peak_to_peak": "float",
+        "min": "float",
+        "max": "float",
+        "skewness": "float",
+        "kurtosis": "float",
+        "zero_crossing_rate": "float",
+        "crest_factor": "float",
+        "quality_score": "float",
+        "signal_seed": "int",
+    }
+    default_params = {}
+
+    def validate(self, params: dict[str, Any], sample_rate: float) -> dict[str, Any]:
+        """Validate parameters. TimeFeatureBlock has no configurable params."""
+        merged = super().validate(params, sample_rate)
+        return merged
+
+    def run(
+        self, signal: Iterable[float], sample_rate: float, params: dict[str, Any]
+    ) -> BlockRunResult:
+        """
+        Extract time-domain features from signal and generate visualization.
+
+        Args:
+            signal: 1D signal array
+            sample_rate: Sample rate in Hz
+            params: Block parameters (unused for this block)
+
+        Returns:
+            BlockRunResult with features dict in result, visualization in plot_data.
+        """
+        params = self.validate(params, sample_rate)
+
+        # Validate and convert signal
+        data = validate_1d_signal(signal, name="signal")
+        warnings = []
+
+        # Compute deterministic seed from signal (like DavinciTronBlock)
+        signal_bytes = data.tobytes()
+        hash_val = hashlib.sha256(signal_bytes).hexdigest()
+        signal_seed = int(hash_val, 16) % (2**32)
+
+        # Extract basic statistical features
+        features = {
+            "mean": float(np.mean(data)),
+            "median": float(np.median(data)),
+            "std": float(np.std(data)),
+            "variance": float(np.var(data)),
+            "rms": float(np.sqrt(np.mean(data**2))),
+            "peak_to_peak": float(np.max(data) - np.min(data)),
+            "min": float(np.min(data)),
+            "max": float(np.max(data)),
+            "skewness": float(stats.skew(data)),
+            "kurtosis": float(stats.kurtosis(data)),
+            "zero_crossing_rate": float(self._zero_crossing_rate(data)),
+            "crest_factor": float(self._crest_factor(data)),
+        }
+
+        # Compute quality score using multiple criteria (learnable inspection)
+        quality_score = self._evaluate_quality(features)
+
+        # Quality checks
+        if features["std"] == 0.0:
+            warnings.append("Signal is flat (zero variance). Features may not be meaningful.")
+        if features["peak_to_peak"] / (features["rms"] + 1e-10) > 10:
+            warnings.append("Signal has very high crest factor. May contain clipping or outliers.")
+        if np.any(np.abs(data) > 1e6):
+            warnings.append("Signal contains very large values. Consider scaling.")
+
+        # Generate visualization as PIL Image
+        viz_image = self._visualize_features(data, sample_rate, features)
+
+        # Build result dictionary
+        result_dict = dict(features)
+        result_dict["quality_score"] = round(quality_score, 4)
+        result_dict["signal_seed"] = signal_seed
+
+        return BlockRunResult(
+            result=result_dict,
+            output_signal=None,  # Features don't modify the signal
+            plot_data={"visualization": viz_image},
+            warnings=warnings,
+            metadata={
+                "sample_rate": sample_rate,
+                "sample_count": len(data),
+                "duration_seconds": len(data) / sample_rate,
+                "quality_score": quality_score,
+                "signal_seed": signal_seed,
+            },
+        )
+
+    @staticmethod
+    def _zero_crossing_rate(signal: np.ndarray) -> float:
+        """
+        Compute zero-crossing rate: fraction of samples where sign changes.
+
+        Returns:
+            ZCR in [0, 1], where 1 means alternating positive/negative.
+        """
+        if signal.size < 2:
+            return 0.0
+        sign_changes = np.abs(np.diff(np.sign(signal)))
+        return float(np.mean(sign_changes) / 2.0)
+
+    @staticmethod
+    def _crest_factor(signal: np.ndarray) -> float:
+        """
+        Compute crest factor: peak amplitude / RMS.
+
+        Returns:
+            Ratio >= 1. For sine wave, ~1.41. For impulse, can be >> 1.
+        """
+        rms = np.sqrt(np.mean(signal**2))
+        if rms == 0:
+            return 0.0
+        return float(np.max(np.abs(signal)) / rms)
+
+    @staticmethod
+    def _evaluate_quality(features: dict[str, float]) -> float:
+        """
+        Evaluate signal quality using multiple weighted criteria.
+        
+        Returns:
+            Quality score in [0, 1].
+        """
+        # Multiple perspective evaluation (inspired by Audience in davincitron)
+        scores = []
+
+        # Criterion 1: Variance (higher is generally better for feature extraction)
+        var_score = min(features["std"] / (abs(features["mean"]) + 0.1), 1.0)
+        scores.append(var_score * 0.3)
+
+        # Criterion 2: Dynamic range utilization
+        range_score = features["peak_to_peak"] / (abs(features["mean"]) + 1.0)
+        range_score = min(range_score, 1.0)
+        scores.append(range_score * 0.25)
+
+        # Criterion 3: Non-uniformity (kurtosis indicates shape complexity)
+        kurt_score = min(abs(features["kurtosis"]) / 10.0, 1.0)
+        scores.append(kurt_score * 0.2)
+
+        # Criterion 4: Temporal complexity (zero crossing rate)
+        zcr_score = features["zero_crossing_rate"]
+        scores.append(zcr_score * 0.15)
+
+        # Criterion 5: Moderate crest factor (not too clipped, not too impulsive)
+        crest_ideal = 1.41  # sine wave reference
+        crest_score = 1.0 - min(abs(features["crest_factor"] - crest_ideal) / 5.0, 1.0)
+        scores.append(max(crest_score, 0.0) * 0.1)
+
+        return float(np.mean(scores))
+
+    @staticmethod
+    def _visualize_features(
+        signal: np.ndarray, sample_rate: float, features: dict[str, float]
+    ) -> Image.Image:
+        """
+        Generate a 2x2 subplot visualization and return as PIL Image.
+
+        Args:
+            signal: The signal array
+            sample_rate: Sample rate in Hz
+            features: Computed feature dictionary
+
+        Returns:
+            PIL Image of the visualization
+        """
+        fig, axes = plt.subplots(2, 2, figsize=(12, 8))
+        fig.suptitle("Time-Domain Feature Analysis", fontsize=14, fontweight='bold')
+
+        # Plot 1: Signal waveform with statistics
+        duration = len(signal) / sample_rate
+        t = np.linspace(0, duration, len(signal))
+        axes[0, 0].plot(t, signal, linewidth=0.8, color='steelblue', label='Signal')
+        axes[0, 0].axhline(y=features['mean'], color='red', linestyle='--', 
+                          label=f"Mean: {features['mean']:.3f}", linewidth=1)
+        axes[0, 0].fill_between(
+            t,
+            features['mean'] - features['std'],
+            features['mean'] + features['std'],
+            alpha=0.2, color='red', label=f"±σ: {features['std']:.3f}"
+        )
+        axes[0, 0].set_xlabel('Time (s)', fontsize=9)
+        axes[0, 0].set_ylabel('Amplitude', fontsize=9)
+        axes[0, 0].set_title('Waveform with Mean and Std Dev', fontsize=10)
+        axes[0, 0].legend(fontsize=8, loc='upper right')
+        axes[0, 0].grid(alpha=0.3)
+
+        # Plot 2: Histogram with distribution
+        axes[0, 1].hist(signal, bins=40, color='steelblue', alpha=0.7, edgecolor='black', density=True)
+        axes[0, 1].axvline(x=features['mean'], color='red', linestyle='--', 
+                           label=f"Mean: {features['mean']:.3f}", linewidth=1)
+        axes[0, 1].axvline(x=features['median'], color='green', linestyle='--', 
+                           label=f"Median: {features['median']:.3f}", linewidth=1)
+        axes[0, 1].set_xlabel('Amplitude', fontsize=9)
+        axes[0, 1].set_ylabel('Density', fontsize=9)
+        axes[0, 1].set_title('Amplitude Distribution', fontsize=10)
+        axes[0, 1].legend(fontsize=8, loc='upper right')
+        axes[0, 1].grid(alpha=0.3, axis='y')
+
+        # Plot 3: Feature comparison (normalized bar chart)
+        feature_names = [
+            'rms', 'peak_to_peak', 'std', 'crest_factor',
+            'zero_crossing_rate', 'skewness', 'kurtosis'
+        ]
+        feature_values = np.array([features.get(name, 0.0) for name in feature_names])
+        # Normalize for visualization
+        feature_values_norm = (feature_values - np.min(feature_values)) / \
+                             (np.max(feature_values) - np.min(feature_values) + 1e-10)
+        
+        colors = plt.cm.viridis(feature_values_norm)
+        axes[1, 0].barh(feature_names, feature_values_norm, color=colors)
+        axes[1, 0].set_xlabel('Normalized Value', fontsize=9)
+        axes[1, 0].set_title('Feature Magnitudes (Normalized)', fontsize=10)
+        axes[1, 0].grid(alpha=0.3, axis='x')
+
+        # Plot 4: Summary statistics text box
+        summary_text = f"""
+SUMMARY STATISTICS
+
+Mean:           {features['mean']:>10.4f}
+Median:         {features['median']:>10.4f}
+Std Dev:        {features['std']:>10.4f}
+Variance:       {features['variance']:>10.4f}
+
+Min:            {features['min']:>10.4f}
+Max:            {features['max']:>10.4f}
+Peak-to-Peak:   {features['peak_to_peak']:>10.4f}
+RMS:            {features['rms']:>10.4f}
+
+Skewness:       {features['skewness']:>10.4f}
+Kurtosis:       {features['kurtosis']:>10.4f}
+Crest Factor:   {features['crest_factor']:>10.4f}
+Zero Cross:     {features['zero_crossing_rate']:>10.4f}
+        """
+        axes[1, 1].text(0.05, 0.95, summary_text, fontfamily='monospace', fontsize=8,
+                       verticalalignment='top', 
+                       bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
+        axes[1, 1].axis('off')
+        axes[1, 1].set_title('Feature Summary', fontsize=10)
+
+        plt.tight_layout()
+
+        # Convert matplotlib figure to PIL Image
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png', dpi=100, bbox_inches='tight')
+        buf.seek(0)
+        plt.close(fig)
+
+        image = Image.open(buf)
+        # Must copy to prevent buffer closure issues
+        image = image.copy()
+        buf.close()
+
+        return image
 
 BLOCK_REGISTRY: dict[str, ProcessingBlock] = {
     block.id: block
@@ -286,6 +575,7 @@ BLOCK_REGISTRY: dict[str, ProcessingBlock] = {
         WaveletBlock(),
         ifftBlock(),
         DavinciTronBlock(),
+        TimeFeatureBlock(),
     )
 }
 

@@ -24,7 +24,7 @@ try:
     from .utils import add_noise, generate_multitone, generate_sine, normalize, resample_signal, time_vector
     from .wavelet import compress, cwt, denoise, dwt, haar_dwt, haar_idwt, idwt
     from .blocks import BLOCK_REGISTRY, ProcessingBlock, get_block, list_blocks, timed_run
-    from .time_features import TimeFeatureBlock
+    from .time_features import TimeFeatureTron
     try:
         from .diffusion import diffusion_denoise
     except ImportError:
@@ -53,7 +53,7 @@ except ImportError:
     from .utils import add_noise, generate_multitone, generate_sine, normalize, resample_signal, time_vector
     from .wavelet import compress, cwt, denoise, dwt, haar_dwt, haar_idwt, idwt
     from .blocks import BLOCK_REGISTRY, ProcessingBlock, get_block, list_blocks, timed_run
-    from .time_features import TimeFeatureBlock
+    from .time_features import TimeFeatureTron
     from .diffusion import diffusion_denoise	
 
 __all__ = [
@@ -95,6 +95,6 @@ __all__ = [
     "spectral_centroid",
     "stream_process",
     "time_vector",
-    "TimeFeatureBlock",
+    "TimeFeatureTron",
     "timed_run",
 ]
